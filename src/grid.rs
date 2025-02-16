@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::{Index, IndexMut},
 };
 
@@ -54,19 +54,18 @@ impl Grid {
     pub fn height(&self) -> usize {
         self.height
     }
+
     pub fn width(&self) -> usize {
         self.width
     }
 
     pub fn collapse(&mut self, tiles: &[Tile], rng: &mut ThreadRng) -> bool {
-        let width = self.width();
-
-        let index = {
+        let (grid_index, options) = {
             let mut cells: Vec<(usize, &mut Cell)> = self
                 .buf
                 .iter_mut()
                 .enumerate()
-                .filter(|(_, cell)| cell.chosen.is_none())
+                .filter(|(_, cell)| cell.options.len() > 1)
                 .collect();
 
             if cells.is_empty() {
@@ -100,68 +99,92 @@ impl Grid {
             }
 
             let (index, cell) = &mut cells[min_i.expect("No cells in grid")];
-            println!("Collapsing {index}");
             if let Some(chosen) = cell.options.drain().choose(rng) {
-                cell.chosen = Some(chosen)
+                cell.options.insert(chosen);
+                if result {
+                    return false;
+                }
+                (*index, cell.options.clone())
             } else {
-                return false;
-            };
-            if result {
+                println!("Failed to collapse {index}");
                 return false;
             }
-            *index
         };
-        if let Some(up_cell) = index
-            .checked_sub(width)
-            .and_then(|index| self.get_index_mut(index))
-        {
-            up_cell.options =
-                &up_cell.options & &tiles[index].neighbors.borrow().up.iter().copied().collect();
-        }
-        if let Some(down_cell) = index
-            .checked_add(width)
-            .and_then(|index| self.get_index_mut(index))
-        {
-            down_cell.options = &down_cell.options
-                & &tiles[index]
-                    .neighbors
-                    .borrow()
-                    .down
-                    .iter()
-                    .copied()
-                    .collect();
-        }
-        if let Some(left_cell) = index
-            .checked_sub(1)
-            .and_then(|index| self.get_index_mut(index))
-        {
-            left_cell.options = &left_cell.options
-                & &tiles[index]
-                    .neighbors
-                    .borrow()
-                    .left
-                    .iter()
-                    .copied()
-                    .collect();
-        }
-        if let Some(right_cell) = index
-            .checked_add(1)
-            .and_then(|index| self.get_index_mut(index))
-        {
-            right_cell.options = &right_cell.options
-                & &tiles[index]
-                    .neighbors
-                    .borrow()
-                    .right
-                    .iter()
-                    .copied()
-                    .collect();
-        }
+        self.update_neighbors(tiles, grid_index, options);
         true
     }
 
     pub fn cells(&self) -> Cells<'_> {
         Cells { grid: self, i: 0 }
+    }
+
+    fn update_neighbors(&mut self, tiles: &[Tile], grid_index: usize, options: HashSet<usize>) {
+        let width = self.width();
+        let available_indexes = &options;
+        if let Some((up_index, up_cell)) = grid_index
+            .checked_sub(width)
+            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
+            .take_if(|(_, up_cell)| up_cell.options.len() != 1)
+        {
+            let count_before = up_cell.options.len();
+            let mut available_options = HashSet::with_capacity(tiles.len());
+            for tile_index in available_indexes {
+                available_options.extend(tiles[*tile_index].neighbors.borrow().up.iter());
+            }
+            up_cell.update_options(&available_options);
+            if count_before != up_cell.options.len() {
+                let options = up_cell.options.clone();
+                self.update_neighbors(tiles, up_index, options);
+            }
+        }
+        if let Some((down_index, down_cell)) = grid_index
+            .checked_add(width)
+            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
+            .take_if(|(_, down_cell)| down_cell.options.len() != 1)
+        {
+            let count_before = down_cell.options.len();
+            let mut available_options = HashSet::with_capacity(tiles.len());
+            for tile_index in available_indexes {
+                available_options.extend(tiles[*tile_index].neighbors.borrow().down.iter());
+            }
+            down_cell.update_options(&available_options);
+            if count_before != down_cell.options.len() {
+                let options = down_cell.options.clone();
+                self.update_neighbors(tiles, down_index, options);
+            }
+        }
+        if let Some((right_index, right_cell)) = grid_index
+            .checked_add(1)
+            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
+            .take_if(|(_, right_cell)| right_cell.options.len() != 1)
+        {
+            let count_before = right_cell.options.len();
+            let mut available_options = HashSet::with_capacity(tiles.len());
+            for tile_index in available_indexes {
+                available_options.extend(tiles[*tile_index].neighbors.borrow().right.iter());
+            }
+            right_cell.update_options(&available_options);
+            if count_before != right_cell.options.len() {
+                let options = right_cell.options.clone();
+                self.update_neighbors(tiles, right_index, options);
+            }
+        }
+        if let Some((left_index, left_cell)) = grid_index
+            .checked_sub(1)
+            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
+            .take_if(|(_, left_cell)| left_cell.options.len() != 1)
+        {
+            let count_before = left_cell.options.len();
+            let mut available_options = HashSet::with_capacity(tiles.len());
+            for tile_index in available_indexes {
+                available_options.extend(tiles[*tile_index].neighbors.borrow().left.iter());
+            }
+            left_cell.update_options(&available_options);
+            if count_before != left_cell.options.len() {
+                let options = left_cell.options.clone();
+                self.update_neighbors(tiles, left_index, options);
+            }
+        }
     }
 }
 
@@ -190,7 +213,8 @@ impl<'grid> Iterator for Cells<'grid> {
     fn next(&mut self) -> Option<Self::Item> {
         let x = self.i % self.grid.width();
         let y = self.i / self.grid.width();
+        let result = self.grid.get_index(self.i).map(|cell| (x, y, cell));
         self.i += 1;
-        self.grid.get((x, y)).map(|cell| (x, y, cell))
+        result
     }
 }
