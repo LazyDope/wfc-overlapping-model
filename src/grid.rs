@@ -1,5 +1,6 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
+    iter,
     ops::{Index, IndexMut},
 };
 
@@ -8,19 +9,33 @@ use rand::prelude::*;
 pub mod cell;
 
 use crate::tile::Tile;
-use cell::Cell;
+use cell::{Cell, Exhausted};
 
 #[derive(Clone)]
 pub struct Grid {
     buf: Vec<Cell>,
     height: usize,
     width: usize,
+    options: HashMap<usize, u32>,
 }
 
 impl Grid {
-    pub fn new(width: usize, height: usize, options: usize) -> Grid {
-        let buf = (0..(width * height)).map(|_| Cell::new(options)).collect();
-        Self { buf, height, width }
+    pub fn new(width: usize, height: usize, options: HashMap<usize, u32>) -> Grid {
+        let buf = (0..(width * height))
+            .map(|_| Cell::new(options.clone()))
+            .collect();
+        Self {
+            buf,
+            height,
+            width,
+            options,
+        }
+    }
+
+    pub fn regenerate(&mut self) {
+        self.buf = (0..(self.width * self.height))
+            .map(|_| Cell::new(self.options.clone()))
+            .collect();
     }
 
     pub fn get(&self, index: (usize, usize)) -> Option<&Cell> {
@@ -59,7 +74,7 @@ impl Grid {
         self.width
     }
 
-    pub fn collapse(&mut self, tiles: &[Tile], rng: &mut ThreadRng) -> bool {
+    pub fn collapse(&mut self, tiles: &[Tile], rng: &mut ThreadRng) -> Result<bool, Exhausted> {
         let (grid_index, options) = {
             let mut cells: Vec<(usize, &mut Cell)> = self
                 .buf
@@ -69,18 +84,17 @@ impl Grid {
                 .collect();
 
             if cells.is_empty() {
-                return false;
+                return Ok(false);
             }
             let result = cells.len() == 1;
             fn calc_entropy(tiles: &[Tile], cell: &Cell) -> f64 {
-                let mut tile_counts = HashMap::new();
-                for tile_index in cell.options.iter() {
-                    *tile_counts
-                        .entry(tiles[*tile_index].image.clone())
-                        .or_default() += 1;
+                let mut tile_counts = vec![0u32; tiles.len()];
+                for (tile_index, count) in cell.options.iter() {
+                    tile_counts[*tile_index] += count;
                 }
                 -tile_counts
-                    .into_values()
+                    .into_iter()
+                    .filter(|&v| v != 0)
                     .map(|count: u32| {
                         let p = count as f64 / cell.options.len() as f64;
                         p * p.log2()
@@ -90,7 +104,7 @@ impl Grid {
 
             let mut min = f64::MAX;
             let mut min_i = None;
-            for (i, (_, cell)) in cells.iter_mut().enumerate() {
+            for (i, (_, cell)) in cells.iter().enumerate() {
                 let entropy = calc_entropy(tiles, cell);
                 if entropy < min {
                     min = entropy;
@@ -99,26 +113,36 @@ impl Grid {
             }
 
             let (index, cell) = &mut cells[min_i.expect("No cells in grid")];
-            if let Some(chosen) = cell.options.drain().choose(rng) {
-                cell.options.insert(chosen);
+            if let Some(chosen_index) = cell
+                .options
+                .drain()
+                .flat_map(|(index, count)| iter::repeat_n(index, count as usize))
+                .choose(rng)
+            {
+                cell.options.insert(chosen_index, 1);
                 if result {
-                    return false;
+                    return Ok(false);
                 }
                 (*index, cell.options.clone())
             } else {
                 println!("Failed to collapse {index}");
-                return false;
+                return Err(Exhausted);
             }
         };
-        self.update_neighbors(tiles, grid_index, options);
-        true
+        self.update_neighbors(tiles, grid_index, options)?;
+        Ok(true)
     }
 
     pub fn cells(&self) -> Cells<'_> {
         Cells { grid: self, i: 0 }
     }
 
-    fn update_neighbors(&mut self, tiles: &[Tile], grid_index: usize, options: HashSet<usize>) {
+    fn update_neighbors(
+        &mut self,
+        tiles: &[Tile],
+        grid_index: usize,
+        options: HashMap<usize, u32>,
+    ) -> Result<(), Exhausted> {
         let width = self.width();
         let available_indexes = &options;
         if let Some((up_index, up_cell)) = grid_index
@@ -127,14 +151,14 @@ impl Grid {
             .take_if(|(_, up_cell)| up_cell.options.len() != 1)
         {
             let count_before = up_cell.options.len();
-            let mut available_options = HashSet::with_capacity(tiles.len());
-            for tile_index in available_indexes {
+            let mut available_options = HashMap::with_capacity(tiles.len());
+            for tile_index in available_indexes.keys() {
                 available_options.extend(tiles[*tile_index].neighbors.borrow().up.iter());
             }
-            up_cell.update_options(&available_options);
+            up_cell.update_options(&available_options)?;
             if count_before != up_cell.options.len() {
                 let options = up_cell.options.clone();
-                self.update_neighbors(tiles, up_index, options);
+                self.update_neighbors(tiles, up_index, options)?;
             }
         }
         if let Some((down_index, down_cell)) = grid_index
@@ -143,30 +167,14 @@ impl Grid {
             .take_if(|(_, down_cell)| down_cell.options.len() != 1)
         {
             let count_before = down_cell.options.len();
-            let mut available_options = HashSet::with_capacity(tiles.len());
-            for tile_index in available_indexes {
+            let mut available_options = HashMap::with_capacity(tiles.len());
+            for tile_index in available_indexes.keys() {
                 available_options.extend(tiles[*tile_index].neighbors.borrow().down.iter());
             }
-            down_cell.update_options(&available_options);
+            down_cell.update_options(&available_options)?;
             if count_before != down_cell.options.len() {
                 let options = down_cell.options.clone();
-                self.update_neighbors(tiles, down_index, options);
-            }
-        }
-        if let Some((right_index, right_cell)) = grid_index
-            .checked_add(1)
-            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
-            .take_if(|(_, right_cell)| right_cell.options.len() != 1)
-        {
-            let count_before = right_cell.options.len();
-            let mut available_options = HashSet::with_capacity(tiles.len());
-            for tile_index in available_indexes {
-                available_options.extend(tiles[*tile_index].neighbors.borrow().right.iter());
-            }
-            right_cell.update_options(&available_options);
-            if count_before != right_cell.options.len() {
-                let options = right_cell.options.clone();
-                self.update_neighbors(tiles, right_index, options);
+                self.update_neighbors(tiles, down_index, options)?;
             }
         }
         if let Some((left_index, left_cell)) = grid_index
@@ -175,16 +183,33 @@ impl Grid {
             .take_if(|(_, left_cell)| left_cell.options.len() != 1)
         {
             let count_before = left_cell.options.len();
-            let mut available_options = HashSet::with_capacity(tiles.len());
-            for tile_index in available_indexes {
+            let mut available_options = HashMap::with_capacity(tiles.len());
+            for tile_index in available_indexes.keys() {
                 available_options.extend(tiles[*tile_index].neighbors.borrow().left.iter());
             }
-            left_cell.update_options(&available_options);
+            left_cell.update_options(&available_options)?;
             if count_before != left_cell.options.len() {
                 let options = left_cell.options.clone();
-                self.update_neighbors(tiles, left_index, options);
+                self.update_neighbors(tiles, left_index, options)?;
             }
         }
+        if let Some((right_index, right_cell)) = grid_index
+            .checked_add(1)
+            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
+            .take_if(|(_, right_cell)| right_cell.options.len() != 1)
+        {
+            let count_before = right_cell.options.len();
+            let mut available_options = HashMap::with_capacity(tiles.len());
+            for tile_index in available_indexes.keys() {
+                available_options.extend(tiles[*tile_index].neighbors.borrow().right.iter());
+            }
+            right_cell.update_options(&available_options)?;
+            if count_before != right_cell.options.len() {
+                let options = right_cell.options.clone();
+                self.update_neighbors(tiles, right_index, options)?;
+            }
+        }
+        Ok(())
     }
 }
 

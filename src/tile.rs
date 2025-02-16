@@ -1,10 +1,10 @@
 use crate::image_impls::{LoopingSubImage, LoopingView};
 
-use std::{cell::RefCell, collections::HashSet};
+use std::{cell::RefCell, collections::HashMap};
 
 use image::RgbImage;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct Directions<T> {
     pub(crate) up: T,
     pub(crate) down: T,
@@ -14,7 +14,7 @@ pub(crate) struct Directions<T> {
 
 pub(crate) struct Tile {
     pub(crate) image: RgbImage,
-    pub(crate) neighbors: RefCell<Directions<HashSet<usize>>>,
+    pub(crate) neighbors: RefCell<Directions<HashMap<usize, u32>>>,
 }
 
 impl Tile {

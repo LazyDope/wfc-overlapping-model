@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use clap::Parser;
 use image::{self, EncodableLayout, ExtendedColorType, ImageBuffer};
@@ -11,7 +11,7 @@ mod image_impls;
 mod tile;
 
 use args::Args;
-use grid::Grid;
+use grid::{cell::Exhausted, Grid};
 use image_impls::Tilable;
 use tile::Tile;
 
@@ -42,19 +42,30 @@ fn model(_app: &App) -> Model {
         })
         .collect();
 
+    let mut options: HashMap<usize, u32> = HashMap::new();
     for (i, outer_tile) in tiles.iter().enumerate() {
         let outer_up_view = outer_tile.up_view();
         let outer_down_view = outer_tile.down_view();
         let outer_left_view = outer_tile.left_view();
         let outer_right_view = outer_tile.right_view();
         let mut neighbors = outer_tile.neighbors.borrow_mut();
-        if outer_up_view == outer_down_view {
-            neighbors.up.insert(i);
-            neighbors.down.insert(i);
-        }
-        if outer_right_view == outer_left_view {
-            neighbors.right.insert(i);
-            neighbors.left.insert(i);
+        let real_i = tiles
+            .iter()
+            .enumerate()
+            .find(|(_, tile)| tile.image == outer_tile.image)
+            .expect("Will find itself if nothing else")
+            .0;
+        let original = real_i == i;
+        *options.entry(real_i).or_default() += 1;
+        if original {
+            if outer_up_view == outer_down_view {
+                *neighbors.up.entry(i).or_default() += 1;
+                *neighbors.down.entry(i).or_default() += 1;
+            }
+            if outer_right_view == outer_left_view {
+                *neighbors.right.entry(i).or_default() += 1;
+                *neighbors.left.entry(i).or_default() += 1;
+            }
         }
         for (j, tile) in tiles.iter().enumerate().skip(i + 1) {
             let inner_up_view = tile.up_view();
@@ -63,25 +74,25 @@ fn model(_app: &App) -> Model {
             let inner_right_view = tile.right_view();
             let mut inner_neighbors = tile.neighbors.borrow_mut();
             if inner_down_view == outer_up_view {
-                neighbors.up.insert(j);
-                inner_neighbors.down.insert(i);
+                *neighbors.up.entry(j).or_default() += 1;
+                *inner_neighbors.down.entry(real_i).or_default() += 1;
             }
             if inner_up_view == outer_down_view {
-                neighbors.down.insert(j);
-                inner_neighbors.up.insert(i);
+                *neighbors.down.entry(j).or_default() += 1;
+                *inner_neighbors.up.entry(real_i).or_default() += 1;
             }
             if inner_left_view == outer_right_view {
-                neighbors.right.insert(j);
-                inner_neighbors.left.insert(i);
+                *neighbors.right.entry(j).or_default() += 1;
+                *inner_neighbors.left.entry(real_i).or_default() += 1;
             }
             if inner_right_view == outer_left_view {
-                neighbors.left.insert(j);
-                inner_neighbors.right.insert(i);
+                *neighbors.left.entry(j).or_default() += 1;
+                *inner_neighbors.right.entry(real_i).or_default() += 1;
             }
         }
     }
     Model {
-        grid: Grid::new(args.output_width, args.output_height, tiles.len()),
+        grid: Grid::new(args.output_width, args.output_height, options),
         tiles,
         rng: rand::rng(),
         collapsing: true,
@@ -91,7 +102,13 @@ fn model(_app: &App) -> Model {
 
 fn update(_app: &App, model: &mut Model, _update: Update) {
     if model.collapsing {
-        model.collapsing = model.grid.collapse(&model.tiles, &mut model.rng);
+        let result = model.grid.collapse(&model.tiles, &mut model.rng);
+        match result {
+            Ok(collapsing) => model.collapsing = collapsing,
+            Err(Exhausted) => {
+                model.grid.regenerate();
+            }
+        }
         if !model.collapsing {
             println!("Collapsing finished");
             if let Some(output) = &model.output {
@@ -100,7 +117,7 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
                     ImageBuffer::from_fn(grid.width() as u32, grid.height() as u32, |x, y| {
                         grid.get((x as usize, y as usize))
                             .map(|cell| {
-                                let tile_index = cell.options.iter().next().expect(
+                                let tile_index = cell.options.keys().next().expect(
                                     "Finished collapse must mean all cells have one option",
                                 );
                                 let image = &model.tiles[*tile_index].image;

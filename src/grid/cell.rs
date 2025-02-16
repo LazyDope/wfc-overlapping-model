@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use image::Pixel;
 use nannou::prelude::*;
@@ -7,21 +7,19 @@ use super::Tile;
 
 #[derive(Clone)]
 pub struct Cell {
-    pub options: HashSet<usize>,
+    pub options: HashMap<usize, u32>,
 }
 
 impl Cell {
-    pub fn new(options: usize) -> Cell {
-        Cell {
-            options: (0..options).collect(),
-        }
+    pub fn new(options: HashMap<usize, u32>) -> Cell {
+        Cell { options }
     }
 
     pub fn draw(&self, draw: &Draw, tiles: &[Tile], x: u32, y: u32, width: f32) {
         if self.options.len() == 1 {
             let chosen = self
                 .options
-                .iter()
+                .keys()
                 .copied()
                 .next()
                 .expect("There will be a value available for chosen index.");
@@ -44,10 +42,23 @@ impl Cell {
         }
     }
 
-    pub fn update_options(&mut self, available_options: &HashSet<usize>) {
-        self.options = &self.options & available_options;
-        if self.options.is_empty() {
-            panic!("Cell options were exhausted!")
+    pub fn update_options(
+        &mut self,
+        available_options: &HashMap<usize, u32>,
+    ) -> Result<(), Exhausted> {
+        let new_options: HashMap<usize, u32> = self
+            .options
+            .iter()
+            .filter(|&(key, _)| available_options.contains_key(key))
+            .map(|(key, value)| (*key, *value))
+            .collect();
+        if new_options.is_empty() {
+            Err(Exhausted)
+        } else {
+            self.options = new_options;
+            Ok(())
         }
     }
 }
+
+pub struct Exhausted;
