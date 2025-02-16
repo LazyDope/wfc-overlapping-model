@@ -89,30 +89,34 @@ impl Grid {
             let result = cells.len() == 1;
             fn calc_entropy(tiles: &[Tile], cell: &Cell) -> f64 {
                 let mut tile_counts = vec![0u32; tiles.len()];
+                let mut total = 0;
                 for (tile_index, count) in cell.options.iter() {
                     tile_counts[*tile_index] += count;
+                    total += count;
                 }
                 -tile_counts
                     .into_iter()
                     .filter(|&v| v != 0)
                     .map(|count: u32| {
-                        let p = count as f64 / cell.options.len() as f64;
+                        let p = count as f64 / total as f64;
                         p * p.log2()
                     })
                     .sum::<f64>()
             }
 
             let mut min = f64::MAX;
-            let mut min_i = None;
+            let mut min_indexes = Vec::new();
             for (i, (_, cell)) in cells.iter().enumerate() {
                 let entropy = calc_entropy(tiles, cell);
-                if entropy < min {
+                if entropy == min {
+                    min_indexes.push(i);
+                } else if entropy < min {
                     min = entropy;
-                    min_i = Some(i);
+                    min_indexes = vec![i];
                 }
             }
 
-            let (index, cell) = &mut cells[min_i.expect("No cells in grid")];
+            let (index, cell) = &mut cells[*min_indexes.choose(rng).expect("No cells in grid")];
             if let Some(chosen_index) = cell
                 .options
                 .drain()
@@ -129,7 +133,7 @@ impl Grid {
                 return Err(Exhausted);
             }
         };
-        self.update_neighbors(tiles, grid_index, options)?;
+        self.update_neighbors(tiles, grid_index, options, 0)?;
         Ok(true)
     }
 
@@ -142,7 +146,12 @@ impl Grid {
         tiles: &[Tile],
         grid_index: usize,
         options: HashMap<usize, u32>,
+        mut depth: usize,
     ) -> Result<(), Exhausted> {
+        if depth > 5 {
+            return Ok(());
+        }
+        depth += 1;
         let width = self.width();
         let available_indexes = &options;
         if let Some((up_index, up_cell)) = grid_index
@@ -158,7 +167,7 @@ impl Grid {
             up_cell.update_options(&available_options)?;
             if count_before != up_cell.options.len() {
                 let options = up_cell.options.clone();
-                self.update_neighbors(tiles, up_index, options)?;
+                self.update_neighbors(tiles, up_index, options, depth)?;
             }
         }
         if let Some((down_index, down_cell)) = grid_index
@@ -174,12 +183,18 @@ impl Grid {
             down_cell.update_options(&available_options)?;
             if count_before != down_cell.options.len() {
                 let options = down_cell.options.clone();
-                self.update_neighbors(tiles, down_index, options)?;
+                self.update_neighbors(tiles, down_index, options, depth)?;
             }
         }
         if let Some((left_index, left_cell)) = grid_index
             .checked_sub(1)
-            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
+            .and_then(|index| {
+                if index % self.width() != (self.width() - 1) {
+                    self.get_index_mut(index).map(|cell| (index, cell))
+                } else {
+                    None
+                }
+            })
             .take_if(|(_, left_cell)| left_cell.options.len() != 1)
         {
             let count_before = left_cell.options.len();
@@ -190,12 +205,18 @@ impl Grid {
             left_cell.update_options(&available_options)?;
             if count_before != left_cell.options.len() {
                 let options = left_cell.options.clone();
-                self.update_neighbors(tiles, left_index, options)?;
+                self.update_neighbors(tiles, left_index, options, depth)?;
             }
         }
         if let Some((right_index, right_cell)) = grid_index
             .checked_add(1)
-            .and_then(|index| self.get_index_mut(index).map(|cell| (index, cell)))
+            .and_then(|index| {
+                if index % self.width() != 0 {
+                    self.get_index_mut(index).map(|cell| (index, cell))
+                } else {
+                    None
+                }
+            })
             .take_if(|(_, right_cell)| right_cell.options.len() != 1)
         {
             let count_before = right_cell.options.len();
@@ -206,7 +227,7 @@ impl Grid {
             right_cell.update_options(&available_options)?;
             if count_before != right_cell.options.len() {
                 let options = right_cell.options.clone();
-                self.update_neighbors(tiles, right_index, options)?;
+                self.update_neighbors(tiles, right_index, options, depth)?;
             }
         }
         Ok(())
