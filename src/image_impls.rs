@@ -1,11 +1,9 @@
 use std::ops::Deref;
 
-use nannou::image::{GenericImageView, SubImage};
+use image::{GenericImageView, ImageBuffer, Pixel, SubImage};
 
-pub trait Tilable {
-    type Tile: GenericImageView;
-
-    fn looping_tiles(self, tile_size: u32) -> Vec<Self::Tile>;
+pub trait Tilable: Sized {
+    fn tiles(&self, tile_size: u32) -> Tiles<'_, Self>;
 }
 
 #[derive(Copy, Clone)]
@@ -13,22 +11,68 @@ pub struct LoopingSubImage<I> {
     image: I,
     xoffset: u32,
     yoffset: u32,
-    xstride: u32,
-    ystride: u32,
+    width: u32,
+    height: u32,
 }
 
-impl<'a, T> Tilable for &'a T
+pub struct Tiles<'img, I> {
+    image: &'img I,
+    x: u32,
+    y: u32,
+    tile_size: u32,
+}
+
+impl<T> Tilable for T
 where
     T: GenericImageView,
 {
-    type Tile = LoopingSubImage<&'a T::InnerImageView>;
-
-    fn looping_tiles(self, tile_size: u32) -> Vec<Self::Tile> {
-        let mut buf = Vec::with_capacity(self.width() as usize * self.height() as usize);
-        for (x, y, _) in self.pixels() {
-            buf.push(self.looping_view(x, y, tile_size, tile_size));
+    fn tiles(&self, tile_size: u32) -> Tiles<'_, Self> {
+        Tiles {
+            image: self,
+            x: 0,
+            y: 0,
+            tile_size,
         }
-        buf
+    }
+}
+type DerefPixel<I> = <<I as Deref>::Target as GenericImageView>::Pixel;
+type DerefSubpixel<I> = <DerefPixel<I> as Pixel>::Subpixel;
+
+impl<'img, I> Iterator for Tiles<'img, I>
+where
+    I: GenericImageView,
+{
+    type Item = LoopingSubImage<&'img I>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.y >= self.image.height() {
+            return None;
+        }
+        let result = self
+            .image
+            .looping_view(self.x, self.y, self.tile_size, self.tile_size);
+        self.x += 1;
+        if self.x >= self.image.width() {
+            self.x = 0;
+            self.y += 1;
+        }
+        Some(result)
+    }
+}
+
+impl<I> LoopingSubImage<I>
+where
+    I: Deref,
+    I::Target: GenericImageView + Sized,
+{
+    pub fn to_image(&self) -> ImageBuffer<DerefPixel<I>, Vec<DerefSubpixel<I>>> {
+        let mut out = ImageBuffer::new(self.width, self.height);
+
+        for (x, y, pixel) in self.pixels() {
+            out.put_pixel(x, y, pixel);
+        }
+
+        out
     }
 }
 
@@ -39,14 +83,8 @@ where
 {
     type Pixel = <<I as Deref>::Target as GenericImageView>::Pixel;
 
-    type InnerImageView = I::Target;
-
     fn dimensions(&self) -> (u32, u32) {
-        (self.xstride, self.ystride)
-    }
-
-    fn bounds(&self) -> (u32, u32, u32, u32) {
-        (self.xoffset, self.yoffset, self.xstride, self.ystride)
+        (self.width, self.height)
     }
 
     fn get_pixel(&self, x: u32, y: u32) -> Self::Pixel {
@@ -56,14 +94,25 @@ where
         )
     }
 
-    fn view(&self, x: u32, y: u32, width: u32, height: u32) -> SubImage<&Self::InnerImageView> {
+    fn view(&self, x: u32, y: u32, width: u32, height: u32) -> SubImage<&Self> {
         let x = (self.xoffset + x) % self.image.width();
         let y = (self.yoffset + y) % self.image.height();
-        SubImage::new(self.inner(), x, y, width, height)
+        SubImage::new(self, x, y, width, height)
     }
+}
 
-    fn inner(&self) -> &Self::InnerImageView {
-        &self.image
+impl<I> PartialEq for LoopingSubImage<I>
+where
+    I: Deref,
+    I::Target: GenericImageView + Sized,
+    DerefPixel<I>: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.dimensions() == other.dimensions()
+            && self
+                .pixels()
+                .zip(other.pixels())
+                .all(|((.., l), (.., r))| l == r)
     }
 }
 
@@ -74,7 +123,7 @@ pub trait LoopingView: GenericImageView {
         yoffset: u32,
         xstride: u32,
         ystride: u32,
-    ) -> LoopingSubImage<&Self::InnerImageView>;
+    ) -> LoopingSubImage<&Self>;
 }
 
 impl<T> LoopingView for T
@@ -87,13 +136,13 @@ where
         yoffset: u32,
         xstride: u32,
         ystride: u32,
-    ) -> LoopingSubImage<&Self::InnerImageView> {
+    ) -> LoopingSubImage<&Self> {
         LoopingSubImage {
-            image: self.inner(),
+            image: self,
             xoffset,
             yoffset,
-            xstride,
-            ystride,
+            width: xstride,
+            height: ystride,
         }
     }
 }
