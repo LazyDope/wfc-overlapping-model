@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use image::Pixel;
 use nannou::prelude::*;
@@ -15,15 +15,7 @@ impl Cell {
         Cell { options }
     }
 
-    pub fn draw(
-        &self,
-        draw: &Draw,
-        tiles: &[Tile],
-        x: u32,
-        y: u32,
-        width: f32,
-        weights: &HashMap<usize, u32>,
-    ) {
+    pub fn draw(&self, draw: &Draw, tiles: &[Tile], x: u32, y: u32, width: f32) {
         if self.options.is_empty() {
             draw.rect()
                 .x_y((x as f32 + 0.5) * width, (y as f32 + 0.5) * width)
@@ -36,16 +28,17 @@ impl Cell {
             let mut sum_b = 0;
             let mut count = 0;
             for tile_index in self.options.iter() {
-                let image = &tiles[*tile_index].image;
-                let weight = weights[tile_index];
+                let tile = &tiles[*tile_index];
+                let image = &tile.image;
+                let frequency = tile.frequency;
                 let center_pixel = image.get_pixel(1, 1);
                 let [r, g, b] = center_pixel.channels() else {
                     panic!("Wrong channel count!")
                 };
-                sum_r += *r as u32 * weight;
-                sum_g += *g as u32 * weight;
-                sum_b += *b as u32 * weight;
-                count += weight;
+                sum_r += *r as u32 * frequency;
+                sum_g += *g as u32 * frequency;
+                sum_b += *b as u32 * frequency;
+                count += frequency;
             }
             sum_r /= count;
             sum_g /= count;
@@ -60,6 +53,25 @@ impl Cell {
                 )));
             // .stroke_weight((width * 0.03).max(2.));
         }
+    }
+
+    /// Calculates the Shannon Entropy based on the provided list of tiles
+    pub fn calculate_entropy(&self, tiles: &[Tile]) -> f64 {
+        let mut tile_counts = vec![0u32; tiles.len()];
+        let mut total = 0;
+        for &tile_index in self.options.iter() {
+            let frequency = tiles[tile_index].frequency;
+            tile_counts[tile_index] += frequency;
+            total += frequency;
+        }
+        -tile_counts
+            .into_iter()
+            .filter(|&v| v != 0)
+            .map(|count: u32| {
+                let p = count as f64 / total as f64;
+                p * p.log2()
+            })
+            .sum::<f64>()
     }
 
     pub fn update_options(&mut self, available_options: &HashSet<usize>) -> Result<(), Exhausted> {

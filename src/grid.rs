@@ -1,10 +1,9 @@
 use std::{
-    collections::{HashMap, HashSet},
-    iter,
+    collections::HashSet,
     ops::{Index, IndexMut},
 };
 
-use rand::prelude::*;
+use rand::{distr::weighted::WeightedIndex, prelude::*};
 
 pub mod cell;
 
@@ -16,7 +15,7 @@ pub struct Grid {
     buf: Vec<Cell>,
     height: usize,
     width: usize,
-    weights: HashMap<usize, u32>,
+    options: HashSet<usize>,
     attempts: u32,
     initial_max_depth: usize,
 }
@@ -25,10 +24,9 @@ impl Grid {
     pub fn new(
         width: usize,
         height: usize,
-        weights: HashMap<usize, u32>,
+        options: HashSet<usize>,
         initial_max_depth: usize,
     ) -> Grid {
-        let options: HashSet<_> = weights.keys().cloned().collect();
         let buf = (0..(width * height))
             .map(|_| Cell::new(options.clone()))
             .collect();
@@ -36,16 +34,15 @@ impl Grid {
             buf,
             height,
             width,
-            weights,
+            options,
             initial_max_depth,
             attempts: 0,
         }
     }
 
     pub fn regenerate(&mut self) {
-        let options: HashSet<_> = self.weights.keys().cloned().collect();
         self.buf = (0..(self.width * self.height))
-            .map(|_| Cell::new(options.clone()))
+            .map(|_| Cell::new(self.options.clone()))
             .collect();
         self.attempts += 1;
     }
@@ -86,10 +83,6 @@ impl Grid {
         self.width
     }
 
-    pub fn weights(&self) -> &HashMap<usize, u32> {
-        &self.weights
-    }
-
     pub fn collapse<T: Rng>(&mut self, tiles: &[Tile], rng: &mut T) -> Result<bool, Exhausted> {
         {
             let mut cells: Vec<(usize, &mut Cell)> = self
@@ -102,28 +95,13 @@ impl Grid {
             if cells.is_empty() {
                 return Ok(false);
             }
-            let result = cells.len() == 1;
-            fn calc_entropy(tiles: &[Tile], cell: &Cell, weights: &HashMap<usize, u32>) -> f64 {
-                let mut tile_counts = vec![0u32; tiles.len()];
-                let mut total = 0;
-                for tile_index in cell.options.iter() {
-                    tile_counts[*tile_index] += weights[tile_index];
-                    total += weights[tile_index];
-                }
-                -tile_counts
-                    .into_iter()
-                    .filter(|&v| v != 0)
-                    .map(|count: u32| {
-                        let p = count as f64 / total as f64;
-                        p * p.log2()
-                    })
-                    .sum::<f64>()
-            }
+            // precalculate whether this will be the last cell to compute to that we don't need to filter the vector again.
+            let last_cell = cells.len() == 1;
 
             let mut min = f64::MAX;
             let mut min_indexes = Vec::new();
             for (i, (_, cell)) in cells.iter().enumerate() {
-                let entropy = calc_entropy(tiles, cell, &self.weights);
+                let entropy = cell.calculate_entropy(tiles);
                 if entropy == min {
                     min_indexes.push(i);
                 } else if entropy < min {
@@ -133,21 +111,23 @@ impl Grid {
             }
 
             let (index, cell) = &mut cells[*min_indexes.choose(rng).expect("No cells in grid")];
-            if let Some(chosen_index) = cell
+            let dist = WeightedIndex::new(
+                cell.options
+                    .iter()
+                    .map(|&tile_index| tiles[tile_index].frequency as usize),
+            )
+            .expect("This distribution should always succeed at being created");
+            let chosen_index = cell
                 .options
                 .drain()
-                .flat_map(|index| iter::repeat_n(index, self.weights[&index] as usize))
-                .choose(rng)
-            {
-                cell.options.insert(chosen_index);
-                if result {
-                    return Ok(false);
-                }
-                let (grid_index, options) = (*index, cell.options.clone());
-                self.update_neighbors(tiles, grid_index, options, 0)?;
-            } else {
-                return Err(Exhausted);
+                .nth(dist.sample(rng))
+                .ok_or(Exhausted)?;
+            cell.options.insert(chosen_index);
+            if last_cell {
+                return Ok(false);
             }
+            let (grid_index, options) = (*index, cell.options.clone());
+            self.update_neighbors(tiles, grid_index, options, 0)?;
         };
         Ok(true)
     }

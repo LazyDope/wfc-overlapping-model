@@ -27,6 +27,7 @@ pub enum Direction {
 pub struct Tile {
     pub image: RgbImage,
     pub neighbors: RefCell<Directions<HashSet<usize>>>,
+    pub frequency: u32,
 }
 
 impl Tile {

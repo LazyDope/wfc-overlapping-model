@@ -1,12 +1,9 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use clap::Parser;
 use image::{self, EncodableLayout, ExtendedColorType, ImageBuffer};
 use nannou::prelude::*;
-use rand::{
-    rngs::{SmallRng, StdRng, ThreadRng},
-    Rng, SeedableRng,
-};
+use rand::{rngs::ThreadRng, Rng};
 
 mod args;
 mod grid;
@@ -51,35 +48,38 @@ fn model() -> Model<ThreadRng> {
         panic!("tile size must be odd")
     }
     let image = image::open(args.input).unwrap().into_rgb8();
-    let tiles: Vec<Tile> = image
+    let mut tiles: Vec<Tile> = image
         .tiles(tile_size)
         .map(|tile_view| Tile {
             image: tile_view.to_image(),
             neighbors: Default::default(),
+            frequency: 0,
         })
         .collect();
 
-    let mut weights: HashMap<usize, u32> = HashMap::new();
-    for (i, outer_tile) in tiles.iter().enumerate() {
-        let mut neighbors = outer_tile.neighbors.borrow_mut();
-        let real_i = tiles
+    for outer_index in 0..tiles.len() {
+        let outer_tile = &tiles[outer_index];
+        let original_index = tiles
             .iter()
             .enumerate()
             .find(|(_, tile)| tile.image == outer_tile.image)
             .expect("Will find itself if nothing else")
             .0;
-        let original = real_i == i;
-        *weights.entry(real_i).or_default() += 1;
+        let original = original_index == outer_index;
+        tiles[original_index].frequency += 1;
+        let original_tile = &tiles[original_index];
+        let mut neighbors = original_tile.neighbors.borrow_mut();
         if original {
             for dir in [Direction::Up, Direction::Right] {
                 let opp_dir = dir.opposing();
-                if outer_tile.view_in_direction(dir) == outer_tile.view_in_direction(opp_dir) {
-                    neighbors[dir].insert(i);
-                    neighbors[opp_dir].insert(i);
+                if original_tile.view_in_direction(dir) == original_tile.view_in_direction(opp_dir)
+                {
+                    neighbors[dir].insert(outer_index);
+                    neighbors[opp_dir].insert(outer_index);
                 }
             }
         }
-        for (j, inner_tile) in tiles.iter().enumerate().skip(i + 1) {
+        for (inner_index, inner_tile) in tiles.iter().enumerate().skip(outer_index + 1) {
             let mut inner_neighbors = inner_tile.neighbors.borrow_mut();
             for dir in [
                 Direction::Up,
@@ -88,20 +88,28 @@ fn model() -> Model<ThreadRng> {
                 Direction::Right,
             ] {
                 let opp_dir = dir.opposing();
-                let outer_view = outer_tile.view_in_direction(dir);
+                let outer_view = original_tile.view_in_direction(dir);
                 let inner_view = inner_tile.view_in_direction(opp_dir);
                 if inner_view == outer_view {
-                    neighbors[dir].insert(j);
-                    inner_neighbors[opp_dir].insert(real_i);
+                    if original {
+                        neighbors[dir].insert(inner_index);
+                    }
+                    inner_neighbors[opp_dir].insert(original_index);
                 }
             }
         }
     }
+    let options = tiles
+        .iter()
+        .enumerate()
+        .filter(|(_, tile)| tile.frequency != 0)
+        .map(|(i, _)| i)
+        .collect();
     Model {
         grid: Grid::new(
             args.output_width,
             args.output_height,
-            weights,
+            options,
             args.max_depth,
         ),
         tiles,
@@ -160,14 +168,7 @@ fn view<T>(app: &App, model: &Model<T>, frame: Frame) {
         .translate(Vec3::new(-frame_width / 2., frame_height / 2., 0.))
         .scale_y(-1.);
     for (x, y, cell) in grid.cells() {
-        cell.draw(
-            &draw,
-            tiles,
-            x as u32,
-            y as u32,
-            tile_width,
-            model.grid.weights(),
-        );
+        cell.draw(&draw, tiles, x as u32, y as u32, tile_width);
     }
     draw.to_frame(app, &frame).unwrap();
 }
