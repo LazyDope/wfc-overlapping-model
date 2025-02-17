@@ -40,11 +40,13 @@ impl Grid {
         }
     }
 
-    pub fn regenerate(&mut self) {
+    pub fn regenerate(&mut self, increase_attempts: bool) {
         self.buf = (0..(self.width * self.height))
             .map(|_| Cell::new(self.options.clone()))
             .collect();
-        self.attempts += 1;
+        if increase_attempts {
+            self.attempts += 1;
+        }
     }
 
     pub fn get(&self, index: (usize, usize)) -> Option<&Cell> {

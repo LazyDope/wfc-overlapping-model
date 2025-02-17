@@ -130,17 +130,16 @@ fn update<T: Rng>(model: &mut Model<T>) {
             Ok(true) => (),
             Ok(false) => {
                 if model.repeating {
-                    model.grid.regenerate()
+                    model.grid.regenerate(false)
                 } else {
                     model.collapsing = false
                 }
             }
             Err(Exhausted) => {
-                model.grid.regenerate();
+                model.grid.regenerate(true);
             }
         }
         if !model.collapsing && result.is_ok() {
-            println!("Collapsing finished");
             if let Some(output) = &model.output {
                 let grid = &model.grid;
                 let image_buffer =
