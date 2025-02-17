@@ -16,45 +16,21 @@ use image_impls::Tilable;
 use tile::Tile;
 
 fn main() {
-    let mut model = model();
-    loop {
-        if model.collapsing {
-            let result = model.grid.collapse(&model.tiles, &mut model.rng);
-            match result {
-                Ok(collapsing) => model.collapsing = collapsing,
-                Err(Exhausted) => {
-                    model.grid.regenerate();
-                }
-            }
+    let args = Args::parse();
+    if args.display {
+        nannou::app(|_| model())
+            .update(|_, model, _| update(model))
+            .simple_window(view)
+            .run();
+    } else {
+        let mut model = model();
+        loop {
+            update(&mut model);
             if !model.collapsing {
-                println!("Collapsing finished");
-                if let Some(output) = &model.output {
-                    let grid = &model.grid;
-                    let image_buffer =
-                        ImageBuffer::from_fn(grid.width() as u32, grid.height() as u32, |x, y| {
-                            grid.get((x as usize, y as usize))
-                                .map(|cell| {
-                                    let tile_index = cell.options.iter().next().expect(
-                                        "Finished collapse must mean all cells have one option",
-                                    );
-                                    let image = &model.tiles[*tile_index].image;
-                                    *image.get_pixel(image.width() / 2, image.height() / 2)
-                                })
-                                .expect("All tiles will have a center pixel")
-                        });
-                    let _ = image::save_buffer(
-                        output,
-                        image_buffer.as_bytes(),
-                        image_buffer.width(),
-                        image_buffer.height(),
-                        ExtendedColorType::Rgb8,
-                    );
-                }
-                break;
+                return;
             }
         }
     }
-    //nannou::app(model).update(update).simple_window(view).run();
 }
 
 struct Model {
@@ -139,7 +115,7 @@ fn model() -> Model {
     }
 }
 
-fn update(_app: &App, model: &mut Model, _update: Update) {
+fn update(model: &mut Model) {
     if model.collapsing {
         let result = model.grid.collapse(&model.tiles, &mut model.rng);
         match result {

@@ -15,4 +15,6 @@ pub struct Args {
     pub output_height: usize,
     #[arg(long = "width")]
     pub output_width: usize,
+    #[arg(long)]
+    pub display: bool,
 }
