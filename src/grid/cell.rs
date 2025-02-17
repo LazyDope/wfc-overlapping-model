@@ -15,30 +15,50 @@ impl Cell {
         Cell { options }
     }
 
-    pub fn draw(&self, draw: &Draw, tiles: &[Tile], x: u32, y: u32, width: f32) {
-        if self.options.len() == 1 {
-            let chosen = self
-                .options
-                .iter()
-                .copied()
-                .next()
-                .expect("There will be a value available for chosen index.");
-            let image = &tiles[chosen].image;
-            let center_pixel = image.get_pixel(1, 1);
-            let [r, g, b] = center_pixel.channels() else {
-                panic!("Wrong channel count!")
-            };
+    pub fn draw(
+        &self,
+        draw: &Draw,
+        tiles: &[Tile],
+        x: u32,
+        y: u32,
+        width: f32,
+        weights: &HashMap<usize, u32>,
+    ) {
+        if self.options.is_empty() {
             draw.rect()
                 .x_y((x as f32 + 0.5) * width, (y as f32 + 0.5) * width)
                 .w_h(width, width)
-                .color(Rgb::from_components((*r, *g, *b)))
+                .color(Rgb::from_components((255u8, 0u8, 100u8)))
                 .stroke_weight((width * 0.03).max(2.));
         } else {
+            let mut sum_r = 0;
+            let mut sum_g = 0;
+            let mut sum_b = 0;
+            let mut count = 0;
+            for tile_index in self.options.iter() {
+                let image = &tiles[*tile_index].image;
+                let weight = weights[tile_index];
+                let center_pixel = image.get_pixel(1, 1);
+                let [r, g, b] = center_pixel.channels() else {
+                    panic!("Wrong channel count!")
+                };
+                sum_r += *r as u32 * weight;
+                sum_g += *g as u32 * weight;
+                sum_b += *b as u32 * weight;
+                count += weight;
+            }
+            sum_r /= count;
+            sum_g /= count;
+            sum_b /= count;
             draw.rect()
                 .x_y((x as f32 + 0.5) * width, (y as f32 + 0.5) * width)
                 .w_h(width, width)
-                .color(Rgb::from_components((100u8, 100u8, 100u8)))
-                .stroke_weight((width * 0.03).max(2.));
+                .color(Rgb::from_components((
+                    sum_r as u8,
+                    sum_g as u8,
+                    sum_b as u8,
+                )));
+            // .stroke_weight((width * 0.03).max(2.));
         }
     }
 

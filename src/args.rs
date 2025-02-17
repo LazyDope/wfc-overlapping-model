@@ -17,4 +17,6 @@ pub struct Args {
     pub output_width: usize,
     #[arg(long)]
     pub display: bool,
+    #[arg(long, default_value_t = 10)]
+    pub max_depth: usize,
 }

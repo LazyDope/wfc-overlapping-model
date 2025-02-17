@@ -3,7 +3,10 @@ use std::{collections::HashMap, path::PathBuf};
 use clap::Parser;
 use image::{self, EncodableLayout, ExtendedColorType, ImageBuffer};
 use nannou::prelude::*;
-use rand::rngs::ThreadRng;
+use rand::{
+    rngs::{SmallRng, StdRng, ThreadRng},
+    Rng, SeedableRng,
+};
 
 mod args;
 mod grid;
@@ -13,7 +16,7 @@ mod tile;
 use args::Args;
 use grid::{cell::Exhausted, Grid};
 use image_impls::Tilable;
-use tile::Tile;
+use tile::{Direction, Tile};
 
 fn main() {
     let args = Args::parse();
@@ -33,16 +36,15 @@ fn main() {
     }
 }
 
-struct Model {
+struct Model<T> {
     tiles: Vec<Tile>,
     grid: Grid,
-    rng: ThreadRng,
+    rng: T,
     collapsing: bool,
     output: Option<PathBuf>,
 }
 
-fn model() -> Model {
-    //_app: &App
+fn model() -> Model<ThreadRng> {
     let args = Args::parse();
     let tile_size = args.tile_size;
     if tile_size % 2 != 1 {
@@ -59,10 +61,6 @@ fn model() -> Model {
 
     let mut weights: HashMap<usize, u32> = HashMap::new();
     for (i, outer_tile) in tiles.iter().enumerate() {
-        let outer_up_view = outer_tile.up_view();
-        let outer_down_view = outer_tile.down_view();
-        let outer_left_view = outer_tile.left_view();
-        let outer_right_view = outer_tile.right_view();
         let mut neighbors = outer_tile.neighbors.borrow_mut();
         let real_i = tiles
             .iter()
@@ -73,41 +71,39 @@ fn model() -> Model {
         let original = real_i == i;
         *weights.entry(real_i).or_default() += 1;
         if original {
-            if outer_up_view == outer_down_view {
-                neighbors.up.insert(i);
-                neighbors.down.insert(i);
-            }
-            if outer_right_view == outer_left_view {
-                neighbors.right.insert(i);
-                neighbors.left.insert(i);
+            for dir in [Direction::Up, Direction::Right] {
+                let opp_dir = dir.opposing();
+                if outer_tile.view_in_direction(dir) == outer_tile.view_in_direction(opp_dir) {
+                    neighbors[dir].insert(i);
+                    neighbors[opp_dir].insert(i);
+                }
             }
         }
-        for (j, tile) in tiles.iter().enumerate().skip(i + 1) {
-            let inner_up_view = tile.up_view();
-            let inner_down_view = tile.down_view();
-            let inner_left_view = tile.left_view();
-            let inner_right_view = tile.right_view();
-            let mut inner_neighbors = tile.neighbors.borrow_mut();
-            if inner_down_view == outer_up_view {
-                neighbors.up.insert(j);
-                inner_neighbors.down.insert(real_i);
-            }
-            if inner_up_view == outer_down_view {
-                neighbors.down.insert(j);
-                inner_neighbors.up.insert(real_i);
-            }
-            if inner_left_view == outer_right_view {
-                neighbors.right.insert(j);
-                inner_neighbors.left.insert(real_i);
-            }
-            if inner_right_view == outer_left_view {
-                neighbors.left.insert(j);
-                inner_neighbors.right.insert(real_i);
+        for (j, inner_tile) in tiles.iter().enumerate().skip(i + 1) {
+            let mut inner_neighbors = inner_tile.neighbors.borrow_mut();
+            for dir in [
+                Direction::Up,
+                Direction::Down,
+                Direction::Left,
+                Direction::Right,
+            ] {
+                let opp_dir = dir.opposing();
+                let outer_view = outer_tile.view_in_direction(dir);
+                let inner_view = inner_tile.view_in_direction(opp_dir);
+                if inner_view == outer_view {
+                    neighbors[dir].insert(j);
+                    inner_neighbors[opp_dir].insert(real_i);
+                }
             }
         }
     }
     Model {
-        grid: Grid::new(args.output_width, args.output_height, weights),
+        grid: Grid::new(
+            args.output_width,
+            args.output_height,
+            weights,
+            args.max_depth,
+        ),
         tiles,
         rng: rand::rng(),
         collapsing: true,
@@ -115,7 +111,7 @@ fn model() -> Model {
     }
 }
 
-fn update(model: &mut Model) {
+fn update<T: Rng>(model: &mut Model<T>) {
     if model.collapsing {
         let result = model.grid.collapse(&model.tiles, &mut model.rng);
         match result {
@@ -124,7 +120,7 @@ fn update(model: &mut Model) {
                 model.grid.regenerate();
             }
         }
-        if !model.collapsing {
+        if !model.collapsing && result.is_ok() {
             println!("Collapsing finished");
             if let Some(output) = &model.output {
                 let grid = &model.grid;
@@ -152,7 +148,7 @@ fn update(model: &mut Model) {
     }
 }
 
-fn view(app: &App, model: &Model, frame: Frame) {
+fn view<T>(app: &App, model: &Model<T>, frame: Frame) {
     let draw = app.draw();
     draw.background().color(PLUM);
     let grid = &model.grid;
@@ -164,7 +160,14 @@ fn view(app: &App, model: &Model, frame: Frame) {
         .translate(Vec3::new(-frame_width / 2., frame_height / 2., 0.))
         .scale_y(-1.);
     for (x, y, cell) in grid.cells() {
-        cell.draw(&draw, tiles, x as u32, y as u32, tile_width);
+        cell.draw(
+            &draw,
+            tiles,
+            x as u32,
+            y as u32,
+            tile_width,
+            model.grid.weights(),
+        );
     }
     draw.to_frame(app, &frame).unwrap();
 }
