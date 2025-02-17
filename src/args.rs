@@ -23,4 +23,6 @@ pub struct Args {
     pub max_depth: usize,
     #[arg(long, value_enum, default_value_t = BorderStyle::Looping)]
     pub border_style: BorderStyle,
+    #[arg(long = "repeat")]
+    pub repeating: bool,
 }

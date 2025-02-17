@@ -38,6 +38,7 @@ struct Model<T> {
     grid: Grid,
     rng: T,
     collapsing: bool,
+    repeating: bool,
     output: Option<PathBuf>,
 }
 
@@ -117,6 +118,7 @@ fn model() -> Model<ThreadRng> {
         tiles,
         rng: rand::rng(),
         collapsing: true,
+        repeating: args.repeating,
         output: args.output,
     }
 }
@@ -125,7 +127,14 @@ fn update<T: Rng>(model: &mut Model<T>) {
     if model.collapsing {
         let result = model.grid.collapse(&model.tiles, &mut model.rng);
         match result {
-            Ok(collapsing) => model.collapsing = collapsing,
+            Ok(true) => (),
+            Ok(false) => {
+                if model.repeating {
+                    model.grid.regenerate()
+                } else {
+                    model.collapsing = false
+                }
+            }
             Err(Exhausted) => {
                 model.grid.regenerate();
             }
