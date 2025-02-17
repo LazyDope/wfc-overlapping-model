@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use image::Pixel;
 use nannou::prelude::*;
@@ -7,11 +7,11 @@ use super::Tile;
 
 #[derive(Clone)]
 pub struct Cell {
-    pub options: HashMap<usize, u32>,
+    pub options: HashSet<usize>,
 }
 
 impl Cell {
-    pub fn new(options: HashMap<usize, u32>) -> Cell {
+    pub fn new(options: HashSet<usize>) -> Cell {
         Cell { options }
     }
 
@@ -19,7 +19,7 @@ impl Cell {
         if self.options.len() == 1 {
             let chosen = self
                 .options
-                .keys()
+                .iter()
                 .copied()
                 .next()
                 .expect("There will be a value available for chosen index.");
@@ -42,16 +42,8 @@ impl Cell {
         }
     }
 
-    pub fn update_options(
-        &mut self,
-        available_options: &HashMap<usize, u32>,
-    ) -> Result<(), Exhausted> {
-        let new_options: HashMap<usize, u32> = self
-            .options
-            .iter()
-            .filter(|&(key, _)| available_options.contains_key(key))
-            .map(|(key, value)| (*key, *value))
-            .collect();
+    pub fn update_options(&mut self, available_options: &HashSet<usize>) -> Result<(), Exhausted> {
+        let new_options = &self.options & available_options;
         if new_options.is_empty() {
             Err(Exhausted)
         } else {

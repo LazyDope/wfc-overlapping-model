@@ -16,7 +16,45 @@ use image_impls::Tilable;
 use tile::Tile;
 
 fn main() {
-    nannou::app(model).update(update).simple_window(view).run();
+    let mut model = model();
+    loop {
+        if model.collapsing {
+            let result = model.grid.collapse(&model.tiles, &mut model.rng);
+            match result {
+                Ok(collapsing) => model.collapsing = collapsing,
+                Err(Exhausted) => {
+                    model.grid.regenerate();
+                }
+            }
+            if !model.collapsing {
+                println!("Collapsing finished");
+                if let Some(output) = &model.output {
+                    let grid = &model.grid;
+                    let image_buffer =
+                        ImageBuffer::from_fn(grid.width() as u32, grid.height() as u32, |x, y| {
+                            grid.get((x as usize, y as usize))
+                                .map(|cell| {
+                                    let tile_index = cell.options.iter().next().expect(
+                                        "Finished collapse must mean all cells have one option",
+                                    );
+                                    let image = &model.tiles[*tile_index].image;
+                                    *image.get_pixel(image.width() / 2, image.height() / 2)
+                                })
+                                .expect("All tiles will have a center pixel")
+                        });
+                    let _ = image::save_buffer(
+                        output,
+                        image_buffer.as_bytes(),
+                        image_buffer.width(),
+                        image_buffer.height(),
+                        ExtendedColorType::Rgb8,
+                    );
+                }
+                break;
+            }
+        }
+    }
+    //nannou::app(model).update(update).simple_window(view).run();
 }
 
 struct Model {
@@ -27,7 +65,8 @@ struct Model {
     output: Option<PathBuf>,
 }
 
-fn model(_app: &App) -> Model {
+fn model() -> Model {
+    //_app: &App
     let args = Args::parse();
     let tile_size = args.tile_size;
     if tile_size % 2 != 1 {
@@ -42,7 +81,7 @@ fn model(_app: &App) -> Model {
         })
         .collect();
 
-    let mut options: HashMap<usize, u32> = HashMap::new();
+    let mut weights: HashMap<usize, u32> = HashMap::new();
     for (i, outer_tile) in tiles.iter().enumerate() {
         let outer_up_view = outer_tile.up_view();
         let outer_down_view = outer_tile.down_view();
@@ -56,15 +95,15 @@ fn model(_app: &App) -> Model {
             .expect("Will find itself if nothing else")
             .0;
         let original = real_i == i;
-        *options.entry(real_i).or_default() += 1;
+        *weights.entry(real_i).or_default() += 1;
         if original {
             if outer_up_view == outer_down_view {
-                *neighbors.up.entry(i).or_default() += 1;
-                *neighbors.down.entry(i).or_default() += 1;
+                neighbors.up.insert(i);
+                neighbors.down.insert(i);
             }
             if outer_right_view == outer_left_view {
-                *neighbors.right.entry(i).or_default() += 1;
-                *neighbors.left.entry(i).or_default() += 1;
+                neighbors.right.insert(i);
+                neighbors.left.insert(i);
             }
         }
         for (j, tile) in tiles.iter().enumerate().skip(i + 1) {
@@ -74,25 +113,25 @@ fn model(_app: &App) -> Model {
             let inner_right_view = tile.right_view();
             let mut inner_neighbors = tile.neighbors.borrow_mut();
             if inner_down_view == outer_up_view {
-                *neighbors.up.entry(j).or_default() += 1;
-                *inner_neighbors.down.entry(real_i).or_default() += 1;
+                neighbors.up.insert(j);
+                inner_neighbors.down.insert(real_i);
             }
             if inner_up_view == outer_down_view {
-                *neighbors.down.entry(j).or_default() += 1;
-                *inner_neighbors.up.entry(real_i).or_default() += 1;
+                neighbors.down.insert(j);
+                inner_neighbors.up.insert(real_i);
             }
             if inner_left_view == outer_right_view {
-                *neighbors.right.entry(j).or_default() += 1;
-                *inner_neighbors.left.entry(real_i).or_default() += 1;
+                neighbors.right.insert(j);
+                inner_neighbors.left.insert(real_i);
             }
             if inner_right_view == outer_left_view {
-                *neighbors.left.entry(j).or_default() += 1;
-                *inner_neighbors.right.entry(real_i).or_default() += 1;
+                neighbors.left.insert(j);
+                inner_neighbors.right.insert(real_i);
             }
         }
     }
     Model {
-        grid: Grid::new(args.output_width, args.output_height, options),
+        grid: Grid::new(args.output_width, args.output_height, weights),
         tiles,
         rng: rand::rng(),
         collapsing: true,
@@ -117,7 +156,7 @@ fn update(_app: &App, model: &mut Model, _update: Update) {
                     ImageBuffer::from_fn(grid.width() as u32, grid.height() as u32, |x, y| {
                         grid.get((x as usize, y as usize))
                             .map(|cell| {
-                                let tile_index = cell.options.keys().next().expect(
+                                let tile_index = cell.options.iter().next().expect(
                                     "Finished collapse must mean all cells have one option",
                                 );
                                 let image = &model.tiles[*tile_index].image;
