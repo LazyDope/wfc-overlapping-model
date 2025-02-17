@@ -1,3 +1,5 @@
+Heavily inspired by [The Coding Train's implementation in p5.js](https://thecodingtrain.com/challenges/186-wfc-overlapping-model)
+
 ### Requirements:
 - [Cargo and Rustup](https://rustup.rs/)
 
