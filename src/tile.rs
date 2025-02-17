@@ -1,4 +1,4 @@
-use crate::image_impls::{LoopingSubImage, LoopingView};
+use crate::image_impls::{BorderStyle, LoopingSubImage, LoopingView};
 
 use std::{
     cell::RefCell,
@@ -28,6 +28,7 @@ pub struct Tile {
     pub image: RgbImage,
     pub neighbors: RefCell<Directions<HashSet<usize>>>,
     pub frequency: u32,
+    pub border_style: BorderStyle,
 }
 
 impl Tile {
@@ -41,27 +42,39 @@ impl Tile {
     }
 
     pub fn up_view(&self) -> LoopingSubImage<&RgbImage> {
-        self.image
-            .looping_view(0, 0, self.image.width(), self.image.height().div_ceil(2))
+        self.image.looping_view(
+            0,
+            0,
+            self.image.width(),
+            self.image.height().div_ceil(2),
+            self.border_style,
+        )
     }
     pub fn down_view(&self) -> LoopingSubImage<&RgbImage> {
         self.image.looping_view(
             0,
-            self.image.height() / 2,
+            self.image.height() as i64 / 2,
             self.image.width(),
             self.image.height().div_ceil(2),
+            self.border_style,
         )
     }
     pub fn left_view(&self) -> LoopingSubImage<&RgbImage> {
-        self.image
-            .looping_view(0, 0, self.image.width().div_ceil(2), self.image.height())
-    }
-    pub fn right_view(&self) -> LoopingSubImage<&RgbImage> {
         self.image.looping_view(
-            self.image.width() / 2,
+            0,
             0,
             self.image.width().div_ceil(2),
             self.image.height(),
+            self.border_style,
+        )
+    }
+    pub fn right_view(&self) -> LoopingSubImage<&RgbImage> {
+        self.image.looping_view(
+            self.image.width() as i64 / 2,
+            0,
+            self.image.width().div_ceil(2),
+            self.image.height(),
+            self.border_style,
         )
     }
 }

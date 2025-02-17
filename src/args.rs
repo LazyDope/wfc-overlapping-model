@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::image_impls::BorderStyle;
+
 #[derive(Parser)]
 #[command(version, about)]
 pub struct Args {
@@ -19,4 +21,6 @@ pub struct Args {
     pub display: bool,
     #[arg(long, default_value_t = 10)]
     pub max_depth: usize,
+    #[arg(long, value_enum, default_value_t = BorderStyle::Looping)]
+    pub border_style: BorderStyle,
 }

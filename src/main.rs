@@ -48,12 +48,14 @@ fn model() -> Model<ThreadRng> {
         panic!("tile size must be odd")
     }
     let image = image::open(args.input).unwrap().into_rgb8();
+    let border_style = args.border_style;
     let mut tiles: Vec<Tile> = image
-        .tiles(tile_size)
+        .tiles(tile_size, border_style)
         .map(|tile_view| Tile {
             image: tile_view.to_image(),
             neighbors: Default::default(),
             frequency: 0,
+            border_style,
         })
         .collect();
 
