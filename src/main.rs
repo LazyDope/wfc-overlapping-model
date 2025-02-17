@@ -111,7 +111,7 @@ fn model() -> Model<ThreadRng> {
     Model {
         grid: Grid::new(
             args.output_width,
-            args.output_height,
+            args.output_height.unwrap_or(args.output_width),
             options,
             args.max_depth,
         ),

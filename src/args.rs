@@ -14,7 +14,7 @@ pub struct Args {
     #[arg(short, long, default_value_t = 3)]
     pub tile_size: u32,
     #[arg(long = "height")]
-    pub output_height: usize,
+    pub output_height: Option<usize>,
     #[arg(long = "width")]
     pub output_width: usize,
     #[arg(long)]
